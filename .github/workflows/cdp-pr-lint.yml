@@ -1,0 +1,111 @@
+name: CDP PR Lint
+
+on:
+  pull_request:
+    paths:
+      - '.github/**'
+      - 'workflow_test/**'
+    types:
+      - edited
+      - opened
+      - reopened
+      - synchronize
+
+jobs:
+
+  # Step 1 - Perform PR Checklist
+  cdp-pr-checklist:
+    name: PR Checklist - General
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout 📋
+        uses: actions/checkout@v3
+      - name: PR Checklist - General
+        uses: ./.github/actions/cdp/pr-checklist/
+        with:
+          pr-checklist-title: '# CDP Checklist - Pull Request'
+          pr-checklist-body: |
+            - [ ] My branch is prefixed properly with a JIRA ticket or a NOREF.
+            - [ ] The title of my pull request contains the ticket number for changes if one exists.
+            - [ ] The pull request has a clear and concise description about the changes.
+            - [ ] I have performed a self-review of my own code.
+            - [ ] All checks pass on my pull requests.
+
+  # Step 2 - Check PR Title
+  cdp-check-pr-title:
+    name: Check PR Title
+    runs-on: ubuntu-latest
+    if: ${{ always() }}
+    steps:
+      - name: Check PR Title 👀
+        uses: morrisoncole/pr-lint-action@v1.7.0
+        with:
+          repo-token: ${ GITHUB_TOKEN }
+          title-regex: "^(NOREF )|[A-Z]+-[0-9X]+\\s"
+          on-failed-regex-create-review: false
+          on-failed-regex-request-changes: false
+          on-failed-regex-fail-action: true
+      - name: Find Comment 🔍
+        if: ${{ always() }}
+        uses: peter-evans/find-comment@v2
+        id: find_comment
+        with:
+          issue-number: ${{ github.event.pull_request.number }}
+          comment-author: "github-actions[bot]"
+          body-includes: "# CDP PR Title"
+      - name: Comment on Success ✅
+        uses: peter-evans/create-or-update-comment@v2
+        if: ${{ success() && steps.find_comment.outputs.comment-id != '' }}
+        with:
+          comment-id: ${{ steps.find_comment.outputs.comment-id }}
+          issue-number: ${{ github.event.pull_request.number }}
+          edit-mode: replace
+          body: |
+            # :white_check_mark: CDP PR Title :white_check_mark:
+            - The title of your PR looks good! Great job!
+      - name: Comment on Failure 🚨
+        uses: peter-evans/create-or-update-comment@v2
+        if: ${{ failure() }}
+        with:
+          comment-id: ${{ steps.find_comment.outputs.comment-id }}
+          issue-number: ${{ github.event.pull_request.number }}
+          edit-mode: replace
+          body: |
+            # :rotating_light: CDP PR Title :rotating_light:
+            - The title of your PR must be prefixed with a JIRA Ticket if one exists, otherwise with NOREF such as: 
+              - ```CDP-XXX patch fix```
+              - ```NOREF fix readme type```
+            - There must be a single whitespace following the prefix.
+
+  # Step 3 - Check PR Description
+  cdp-check-pr-body:
+    name: Check PR Description
+    runs-on: ubuntu-latest
+    if: ${{ always() }}
+    steps:
+      - name: Check PR Description 👀
+        uses: actions/github-script@v6
+        if: ${{ github.event.pull_request.body == null }}
+        with:
+          github-token: "${{ secrets.GITHUB_TOKEN }}"
+          script: |
+            const output = `# 🚨 Missing PR Description 🚨
+            Please update the PR with a description!`;
+
+            github.rest.issues.createComment({
+              issue_number: context.issue.number,
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              body: output
+            })
+
+            github.rest.checks.update({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              check_run_id: context.runId,
+              conclusion: "failure",
+              output: {
+                title: "Description check",
+                summary: output
+              }
+            })
